@@ -243,3 +243,67 @@
        error)
       (is (= 413 (:status @response)))
       (is (not (realized? error))))))
+
+(deftest unsupported-charset-test
+  (testing "unsupported charset in multipart"
+    (let [form-body (str "--XXXX\r\n"
+                         "Content-Disposition: form-data;"
+                         "name=\"foo\"\r\n"
+                         "Content-Type: text/plain; charset=utf-7\r\n\r\n"
+                         "Hello World\r\n"
+                         "--XXXX--")
+          handler (wrap-multipart-params identity {:store string-store})
+          request {:headers {"content-type" "multipart/form-data; boundary=XXXX"
+                             "content-length" (str (count form-body))}
+                   :body (string-input-stream form-body)}
+          response (handler request)]
+      (is (= 415 (:status response)))))
+
+  (testing "unsupported charset in header"
+    (let [form-body (str "--XXXX\r\n"
+                         "Content-Disposition: form-data;"
+                         "name=\"foo\"\r\n"
+                         "Content-Type: text/plain\r\n\r\n"
+                         "Hello World\r\n"
+                         "--XXXX--")
+          handler (wrap-multipart-params identity {:store string-store})
+          request {:headers
+                   {"content-type" "multipart/form-data; charset=utf-7; boundary=XXXX"
+                    "content-length" (str (count form-body))}
+                   :body (string-input-stream form-body)}
+          response (handler request)]
+      (is (= 415 (:status response)))))
+
+  (testing "unsupported charset in async handler"
+    (let [form-body (str "--XXXX\r\n"
+                         "Content-Disposition: form-data;"
+                         "name=\"foo\"\r\n"
+                         "Content-Type: text/plain; charset=utf-7\r\n\r\n"
+                         "Hello World\r\n"
+                         "--XXXX--")
+          response  (promise)
+          error     (promise)
+          handler   (wrap-multipart-params
+                     (fn [_ respond _] (respond {:status 200}))
+                     {:store string-store})
+          request   {:headers {"content-type" "multipart/form-data; boundary=XXXX"
+                               "content-length" (str (count form-body))}
+                     :body (string-input-stream form-body)}]
+      (handler request response error)
+      (is (not (realized? error)))
+      (is (= 415 (:status (deref response 1000 {:status 500}))))))
+
+  (testing "illegal charset in header"
+    (let [form-body (str "--XXXX\r\n"
+                         "Content-Disposition: form-data;"
+                         "name=\"foo\"\r\n"
+                         "Content-Type: text/plain\r\n\r\n"
+                         "Hello World\r\n"
+                         "--XXXX--")
+          handler (wrap-multipart-params identity {:store string-store})
+          request {:headers
+                   {"content-type" "multipart/form-data; charset=utf$8; boundary=XXXX"
+                    "content-length" (str (count form-body))}
+                   :body (string-input-stream form-body)}
+          response (handler request)]
+      (is (= 415 (:status response))))))

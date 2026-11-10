@@ -134,14 +134,30 @@
   ([request respond _]
    (respond (content-too-large-handler request))))
 
-(defn- handle-request-and-errors [requestf handlef errorf]
+(defn unsupported-charset-handler
+  "A handler function that responds with a minimal 415 Unsupported Media Type
+  response."
+  ([_]
+   {:status  415
+    :headers {"Content-Type" "text/plain; charset=UTF-8"}
+    :body    "Unsupported charset in request content type."})
+  ([request respond _]
+   (respond (unsupported-charset-handler request))))
+
+(defn- handle-request-and-errors [requestf handlef too-largef bad-charsetf]
   ((try
      (let [request (requestf)]
        #(handlef request))
      (catch FileUploadException _
-       errorf)
+       too-largef)
      (catch clojure.lang.ExceptionInfo _
-       errorf))))
+       too-largef)
+     (catch java.io.UnsupportedEncodingException _
+       bad-charsetf)
+     (catch java.nio.charset.UnsupportedCharsetException _
+       bad-charsetf)
+     (catch java.nio.charset.IllegalCharsetNameException _
+       bad-charsetf))))
 
 (defn wrap-multipart-params
   "Middleware to parse multipart parameters from a request. Adds the
@@ -182,19 +198,27 @@
 
   :error-handler     - a handler that is invoked when the :max-file-size or
                        :max-file-count limits are exceeded. Defaults to
-                       using the content-too-large-handler function."
+                       using the content-too-large-handler function.
+
+  :unsupported-charset-handler - a handler that is invoked when the charset is
+                                 unsupported. Defaults to using the
+                                 unsupported-charset-handler function."
   ([handler]
    (wrap-multipart-params handler {}))
   ([handler options]
-   (let [error-handler (:error-handler options content-too-large-handler)]
+   (let [error-handler       (:error-handler options content-too-large-handler)
+         bad-charset-handler (:unsupported-charset-handler
+                              options unsupported-charset-handler)]
      (fn
        ([request]
         (handle-request-and-errors
          #(multipart-params-request request options)
          handler
-         #(error-handler request)))
+         #(error-handler request)
+         #(bad-charset-handler request)))
        ([request respond raise]
         (handle-request-and-errors
          #(multipart-params-request request options)
          #(handler % respond raise)
-         #(error-handler request respond raise)))))))
+         #(error-handler request respond raise)
+         #(bad-charset-handler request respond raise)))))))
